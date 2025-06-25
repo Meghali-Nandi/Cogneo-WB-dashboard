@@ -1,0 +1,4 @@
+streamlit
+databricks-sql-connector
+pandas # Often useful for data manipulation and display
+plotly # If you plan to use Plotly for charts

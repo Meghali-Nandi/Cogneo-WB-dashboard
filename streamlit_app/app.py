@@ -308,11 +308,11 @@ if not raw_df.empty:
 
         # Create age bins for histogram
         bins = list(range(0, 101, 10)) # 0-10, 10-20, ..., 90-100
-        labels = [f'{i}-{i+9}' for i in bins[:-1]]
-        labels.append('100+') # For ages 100 and above
+        age_range_labels = [f'{i}-{i+9}' for i in bins[:-1]]
+        age_range_labels.append('100+') # For ages 100 and above
         
-        # Add a special bin for unknown/missing ages
-        labels.insert(0, 'Unknown') 
+        # Ensure the order of age groups for the chart
+        age_group_order = ['Unknown'] + age_range_labels
         
         # Binning function with handling for -1 (unknown)
         def age_bin_label(age):
@@ -320,16 +320,13 @@ if not raw_df.empty:
                 return 'Unknown'
             for i in range(len(bins) - 1):
                 if bins[i] <= age < bins[i+1]:
-                    return labels[i+1] # Labels correspond to index + 1 after inserting 'Unknown' at 0
+                    return age_range_labels[i] # Correct index for age ranges
             if age >= bins[-1]:
                 return '100+'
             return 'Unknown' # Fallback for unexpected values
             
         raw_df['age_group'] = raw_df['age'].apply(age_bin_label)
         
-        # Ensure the order of age groups for the chart
-        age_group_order = ['Unknown'] + labels
-
         age_counts = raw_df['age_group'].value_counts().reset_index()
         age_counts.columns = ['Age Group', 'Count']
         age_counts['Age Group'] = pd.Categorical(age_counts['Age Group'], categories=age_group_order, ordered=True)

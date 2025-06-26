@@ -152,7 +152,7 @@ if not raw_df.empty:
 
     if not aggregated_status_df.empty:
         # Sort for better visualization (e.g., Approved first, Rejected second)
-        order = ['Approved', 'Rejected', 'In Progress', 'Unknown/Missing', 'Other']
+        order = ['Approved', 'Rejected', 'Pending', 'Unknown/Missing', 'Other']
         aggregated_status_df['Status'] = pd.Categorical(aggregated_status_df['Status'], categories=order, ordered=True)
         aggregated_status_df = aggregated_status_df.sort_values('Status')
 

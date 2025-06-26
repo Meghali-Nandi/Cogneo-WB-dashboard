@@ -14,9 +14,10 @@ st.title("📊 Loan Application Approval Status Overview")
 
 st.markdown(
     """
-    This dashboard provides a live overview of loan application approval statuses 
-    from your Databricks `test.edu_loan.applications` table. 
-    It aggregates statuses across all stages (ES, DA, OSD, MNGR, GM, MD).
+    This dashboard provides a live overview of loan application approval statuses
+    from your Databricks `test.edu_loan.applications` table.
+    You can view aggregated statuses across all stages (ES, DA, OSD, MNGR, GM, MD)
+    or select a specific stage for detailed analysis.
     """
 )
 
@@ -65,7 +66,7 @@ def fetch_approval_data(table_name: str):
     ]
     columns_str = ", ".join(status_columns)
     query = f"SELECT {columns_str} FROM {table_name} LIMIT 50000" # Added limit for safety
-    
+
     try:
         with conn.cursor() as cursor:
             st.sidebar.info(f"Executing query for approval statuses...")
@@ -80,29 +81,23 @@ def fetch_approval_data(table_name: str):
         st.sidebar.error("Data fetch failed.")
         return pd.DataFrame() # Return empty DataFrame on error
 
-# --- Function to process and aggregate approval data ---
-def process_and_aggregate_statuses(df: pd.DataFrame):
+# --- Function to process and aggregate/filter approval data ---
+def process_status_data(df: pd.DataFrame, selected_stage: str = "Aggregated"):
     """
-    Aggregates all approval statuses from various stages into a single count.
+    Processes and aggregates/filters approval statuses.
     Normalizes status names (e.g., 'Approved', 'approved').
+    Can aggregate all stages or focus on a specific stage.
     """
     if df.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), "No Data"
 
-    # Melt the DataFrame to long format to easily count all statuses
-    # We are interested in all columns ending with '_approval_status'
     status_cols = [col for col in df.columns if col.endswith('_approval_status')]
-    
+
     if not status_cols:
         st.warning("No '_approval_status' columns found in the data.")
-        return pd.DataFrame()
-
-    melted_df = df[status_cols].melt(var_name='approval_stage', value_name='status')
+        return pd.DataFrame(), "No relevant status columns"
 
     # Normalize status values to lowercase and standardize
-    melted_df['status'] = melted_df['status'].astype(str).str.lower().str.strip()
-
-    # Map common variations to a standard set
     status_mapping = {
         'approved': 'Approved',
         'accepted': 'Approved',
@@ -110,24 +105,62 @@ def process_and_aggregate_statuses(df: pd.DataFrame):
         'rejected': 'Rejected',
         'denied': 'Rejected',
         'in progress': 'In Progress',
-        'pending': 'Pending',
-        'review': 'Pending',
-        'awaiting review': 'Pending',
+        'pending': 'In Progress',
+        'review': 'In Progress',
+        'awaiting review': 'In Progress',
         'null': 'Unknown/Missing', # Handle potential nulls or empty strings
         'none': 'Unknown/Missing',
         '': 'Unknown/Missing'
     }
-    melted_df['standard_status'] = melted_df['status'].map(status_mapping).fillna('Other')
 
-    # Count occurrences of each standard status
-    status_counts = melted_df['standard_status'].value_counts().reset_index()
-    status_counts.columns = ['Status', 'Count']
-    
-    return status_counts
+    if selected_stage == "Aggregated":
+        # Melt the DataFrame to long format to easily count all statuses
+        melted_df = df[status_cols].melt(var_name='approval_stage', value_name='status')
+        melted_df['status'] = melted_df['status'].astype(str).str.lower().str.strip()
+        melted_df['standard_status'] = melted_df['status'].map(status_mapping).fillna('Other')
+
+        # Count occurrences of each standard status
+        status_counts = melted_df['standard_status'].value_counts().reset_index()
+        status_counts.columns = ['Status', 'Count']
+        chart_title = "Total Applications by Approval Status (All Stages Aggregated)"
+    else:
+        # Focus on a specific stage
+        stage_column = f"{selected_stage.lower()}_approval_status"
+        if stage_column not in df.columns:
+            st.error(f"Column '{stage_column}' not found in the fetched data.")
+            return pd.DataFrame(), f"Column {stage_column} not found"
+
+        stage_df = df[[stage_column]].copy() # Use .copy() to avoid SettingWithCopyWarning
+        stage_df['status'] = stage_df[stage_column].astype(str).str.lower().str.strip()
+        stage_df['standard_status'] = stage_df['status'].map(status_mapping).fillna('Other')
+
+        status_counts = stage_df['standard_status'].value_counts().reset_index()
+        status_counts.columns = ['Status', 'Count']
+        chart_title = f"Applications by Approval Status for {selected_stage} Stage"
+
+    # Sort for better visualization (e.g., Approved first, Rejected second)
+    order = ['Approved', 'Rejected', 'In Progress', 'Unknown/Missing', 'Other']
+    status_counts['Status'] = pd.Categorical(status_counts['Status'], categories=order, ordered=True)
+    status_counts = status_counts.sort_values('Status')
+
+    return status_counts, chart_title
 
 # --- Main Dashboard Logic ---
 with st.sidebar:
     st.header("Dashboard Controls")
+
+    # Dropdown to select approval stage
+    all_status_stages = [
+        "Aggregated",
+        "ES", "DA", "OSD", "MNGR", "GM", "MD"
+    ]
+    selected_view = st.selectbox(
+        "Select Approval Stage View:",
+        options=all_status_stages,
+        index=0, # Default to 'Aggregated'
+        help="Choose 'Aggregated' for a combined view or a specific stage for granular data."
+    )
+
     st.write("Click below to refresh data from Databricks.")
     if st.button("Refresh Data from Databricks", help="Fetches the latest data and clears cache."):
         st.cache_data.clear()
@@ -145,32 +178,27 @@ raw_df = fetch_approval_data(default_table)
 data_load_state.empty() # Clear loading message
 
 if not raw_df.empty:
-    st.subheader("Aggregated Approval Statuses Across All Stages")
-    
-    # Process and get aggregated counts
-    aggregated_status_df = process_and_aggregate_statuses(raw_df)
+    st.subheader(f"{selected_view} Approval Statuses Overview")
 
-    if not aggregated_status_df.empty:
-        # Sort for better visualization (e.g., Approved first, Rejected second)
-        order = ['Approved', 'Rejected', 'Pending', 'Unknown/Missing', 'Other']
-        aggregated_status_df['Status'] = pd.Categorical(aggregated_status_df['Status'], categories=order, ordered=True)
-        aggregated_status_df = aggregated_status_df.sort_values('Status')
+    # Process and get aggregated/filtered counts based on selection
+    processed_df, chart_title_text = process_status_data(raw_df, selected_view)
 
+    if not processed_df.empty:
         col1, col2 = st.columns([1, 2])
 
         with col1:
             st.markdown("#### Status Counts")
-            st.dataframe(aggregated_status_df, use_container_width=True, hide_index=True)
+            st.dataframe(processed_df, use_container_width=True, hide_index=True)
 
         with col2:
-            st.markdown("#### Distribution of Approval Statuses")
+            st.markdown(f"#### {chart_title_text}")
             # Create a bar chart using Plotly Express
             fig = px.bar(
-                aggregated_status_df,
+                processed_df,
                 x='Status',
                 y='Count',
                 color='Status',
-                title='Total Applications by Approval Status',
+                title=chart_title_text,
                 labels={'Status': 'Approval Status', 'Count': 'Number of Instances'},
                 template="plotly_white",
                 color_discrete_map={
@@ -189,9 +217,10 @@ if not raw_df.empty:
         st.dataframe(raw_df.head(50), use_container_width=True) # Show only first 50 rows for preview
 
     else:
-        st.warning("Could not process approval status data. Check column names or data types.")
+        st.warning(f"Could not process data for '{selected_view}'. Check column names or data types.")
 else:
     st.warning("No data retrieved from Databricks. Please check your connection and table name.")
 
 st.sidebar.markdown("---")
 st.sidebar.caption("Dashboard")
+�

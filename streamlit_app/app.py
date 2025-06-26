@@ -2,24 +2,16 @@ import streamlit as st
 from databricks import sql
 import pandas as pd
 import plotly.express as px
+from datetime import datetime
 
 # --- Streamlit Page Configuration ---
 st.set_page_config(
     layout="wide",
-    page_title="Loan Application Approval Dashboard",
+    page_title="Unified Dashboard",
     initial_sidebar_state="expanded"
 )
 
-st.title("Loan Application Approval Status Overview")
-
-st.markdown(
-    """
-    This dashboard provides a live overview of loan application approval statuses
-    from your Databricks `test.edu_loan.applications` table.
-    You can view aggregated statuses across all stages (ES, DA, OSD, MNGR, GM, MD)
-    or select a specific stage for detailed analysis.
-    """
-)
+st.title("Unified Dashboard")
 
 # --- Streamlit Secrets for Databricks Connection ---
 # Access credentials securely from .streamlit/secrets.toml
@@ -28,11 +20,14 @@ try:
     http_path = st.secrets["databricks"]["http_path"]
     access_token = st.secrets["databricks"]["access_token"]
     default_table = st.secrets["databricks"]["table_name"] # e.g., test.edu_loan.applications
-except KeyError:
+    religion_table = st.secrets["databricks"].get("religion_table", "test.edu_loan.religions") # Assuming a religion lookup table
+    district_table = st.secrets["databricks"].get("district_table", "test.edu_loan.districts") # Assuming a district lookup table
+except KeyError as e:
     st.error(
-        "Databricks credentials not found in `.streamlit/secrets.toml` or Streamlit Cloud secrets. "
-        "Please check your configuration. "
-        "Make sure you have `server_hostname`, `http_path`, `access_token`, and `table_name` defined under a `[databricks]` section."
+        f"Databricks credentials or table names not found in `.streamlit/secrets.toml` or Streamlit Cloud secrets. "
+        f"Missing key: {e}. Please check your configuration. "
+        "Make sure you have `server_hostname`, `http_path`, `access_token`, `table_name`, "
+        "`religion_table`, and `district_table` defined under a `[databricks]` section."
     )
     st.stop() # Stop the app if credentials are missing
 
@@ -52,33 +47,72 @@ def get_databricks_connection():
         st.info("Please ensure your Databricks SQL Warehouse is running and credentials are correct.")
         st.stop()
 
-# --- Function to fetch data ---
+# --- Function to fetch main application data ---
 @st.cache_data(ttl=600) # Cache data for 10 minutes to reduce Databricks calls
-def fetch_approval_data(table_name: str):
+def fetch_application_data(table_name: str):
     """
-    Fetches specific approval status data from Databricks.
-    Selects only the _approval_status columns.
+    Fetches application data including approval statuses, gender, dob, religion_id, and present_district_id.
     """
     conn = get_databricks_connection()
-    status_columns = [
-        "es_approval_status", "da_approval_status"
+    columns_to_fetch = [
+        "es_approval_status", "da_approval_status", "osd_approval_status",
+        "mngr_approval_status", "gm_approval_status", "md_approval_status",
+        "gender", "dob", "religion_id", "present_district_id"
     ]
-    columns_str = ", ".join(status_columns)
+    columns_str = ", ".join(columns_to_fetch)
     query = f"SELECT {columns_str} FROM {table_name} LIMIT 50000" # Added limit for safety
 
     try:
         with conn.cursor() as cursor:
-            st.sidebar.info(f"Executing query for approval statuses...")
+            st.sidebar.info(f"Executing query for application data...")
             cursor.execute(query)
             data = cursor.fetchall()
             column_names = [desc[0] for desc in cursor.description]
             df = pd.DataFrame(data, columns=column_names)
-            st.sidebar.success("Data fetched successfully!")
+            st.sidebar.success("Application data fetched successfully!")
             return df
     except Exception as e:
-        st.error(f"Error executing query on Databricks: {e}")
-        st.sidebar.error("Data fetch failed.")
+        st.error(f"Error executing query on Databricks for application data: {e}")
+        st.sidebar.error("Application data fetch failed.")
         return pd.DataFrame() # Return empty DataFrame on error
+
+# --- Function to fetch religion lookup data ---
+@st.cache_data(ttl=3600) # Cache religion data for 1 hour
+def fetch_religions(table_name: str):
+    """Fetches religion lookup data (id, religion_name)."""
+    conn = get_databricks_connection()
+    query = f"SELECT id, religion_name FROM {table_name}"
+    try:
+        with conn.cursor() as cursor:
+            st.sidebar.info("Fetching religion data...")
+            cursor.execute(query)
+            data = cursor.fetchall()
+            df = pd.DataFrame(data, columns=['id', 'religion_name'])
+            st.sidebar.success("Religion data fetched!")
+            return df
+    except Exception as e:
+        st.error(f"Error fetching religion data from {table_name}: {e}")
+        st.sidebar.error("Religion data fetch failed.")
+        return pd.DataFrame()
+
+# --- Function to fetch district lookup data ---
+@st.cache_data(ttl=3600) # Cache district data for 1 hour
+def fetch_districts(table_name: str):
+    """Fetches district lookup data (id, district_name)."""
+    conn = get_databricks_connection()
+    query = f"SELECT id, district_name FROM {table_name}"
+    try:
+        with conn.cursor() as cursor:
+            st.sidebar.info("Fetching district data...")
+            cursor.execute(query)
+            data = cursor.fetchall()
+            df = pd.DataFrame(data, columns=['id', 'district_name'])
+            st.sidebar.success("District data fetched!")
+            return df
+    except Exception as e:
+        st.error(f"Error fetching district data from {table_name}: {e}")
+        st.sidebar.error("District data fetch failed.")
+        return pd.DataFrame()
 
 # --- Function to process and aggregate/filter approval data ---
 def process_status_data(df: pd.DataFrame, selected_stage: str = "Aggregated", status_filter: list = None):
@@ -137,7 +171,7 @@ def process_status_data(df: pd.DataFrame, selected_stage: str = "Aggregated", st
         stage_df = df[[stage_column]].copy() # Use .copy() to avoid SettingWithCopyWarning
         stage_df['status'] = stage_df[stage_column].astype(str).str.lower().str.strip()
         stage_df['standard_status'] = stage_df['status'].map(status_mapping).fillna('Other')
-        
+
         # Apply status filter if provided
         if status_filter:
             stage_df = stage_df[stage_df['standard_status'].isin(status_filter)]
@@ -173,7 +207,7 @@ with st.sidebar:
         index=0, # Default to 'Aggregated'
         help="Choose 'Aggregated' for a combined view or a specific stage for granular data."
     )
-    
+
     # Multiselect for filtering by specific status types
     all_status_types = ['Approved', 'Rejected', 'In Progress', 'Unknown/Missing', 'Other']
     selected_status_types = st.multiselect(
@@ -196,10 +230,13 @@ with st.sidebar:
 
 
 data_load_state = st.info("Loading data from Databricks... This may take a moment.")
-raw_df = fetch_approval_data(default_table)
+raw_df = fetch_application_data(default_table)
+religions_df = fetch_religions(religion_table)
+districts_df = fetch_districts(district_table)
 data_load_state.empty() # Clear loading message
 
 if not raw_df.empty:
+    # --- Approval Status Charts ---
     st.subheader(f"{selected_view} Approval Statuses Overview")
 
     # Process and get aggregated/filtered counts based on selection, applying new status filter
@@ -234,13 +271,133 @@ if not raw_df.empty:
             fig.update_layout(showlegend=False) # Hide legend if colors are mapped to x-axis
             st.plotly_chart(fig, use_container_width=True)
 
-        st.markdown("---")
-        st.subheader("Raw Data Preview (First 50 Rows)")
-        st.dataframe(raw_df.head(50), use_container_width=True) # Show only first 50 rows for preview
-
     else:
-        st.warning(f"No data to display after filtering for '{selected_view}' with selected status types. "
+        st.warning(f"No data to display for approval statuses after filtering for '{selected_view}' with selected status types. "
                    "Try adjusting your 'Filter by Result Status' selection.")
+
+    st.markdown("---") # Separator for new charts
+
+    # --- New Charts Section ---
+    st.subheader("Applicant Demographics and Location")
+
+    # Chart 1: Gender Distribution
+    if 'gender' in raw_df.columns and not raw_df['gender'].empty:
+        gender_counts = raw_df['gender'].value_counts().reset_index()
+        gender_counts.columns = ['Gender', 'Count']
+        if not gender_counts.empty:
+            fig_gender = px.pie(
+                gender_counts,
+                values='Count',
+                names='Gender',
+                title='Number of Applicants by Gender',
+                template="plotly_white"
+            )
+            st.plotly_chart(fig_gender, use_container_width=True)
+        else:
+            st.info("No gender data available or all values are null/empty.")
+    else:
+        st.info("Gender column not found or is empty in the dataset.")
+
+
+    # Chart 2: Age Distribution
+    if 'dob' in raw_df.columns and not raw_df['dob'].empty:
+        # Calculate age from DOB
+        raw_df['dob'] = pd.to_datetime(raw_df['dob'], errors='coerce')
+        raw_df['age'] = raw_df['dob'].apply(lambda x: (datetime.now().year - x.year - ((datetime.now().month, datetime.now().day) < (x.month, x.day))) if pd.notna(x) else None)
+        raw_df['age'] = raw_df['age'].fillna(-1).astype(int) # Use -1 for unknown age
+
+        # Create age bins for histogram
+        bins = list(range(0, 101, 10)) # 0-10, 10-20, ..., 90-100
+        labels = [f'{i}-{i+9}' for i in bins[:-1]]
+        labels.append('100+') # For ages 100 and above
+        
+        # Add a special bin for unknown/missing ages
+        labels.insert(0, 'Unknown') 
+        
+        # Binning function with handling for -1 (unknown)
+        def age_bin_label(age):
+            if age == -1:
+                return 'Unknown'
+            for i in range(len(bins) - 1):
+                if bins[i] <= age < bins[i+1]:
+                    return labels[i+1] # Labels correspond to index + 1 after inserting 'Unknown' at 0
+            if age >= bins[-1]:
+                return '100+'
+            return 'Unknown' # Fallback for unexpected values
+            
+        raw_df['age_group'] = raw_df['age'].apply(age_bin_label)
+        
+        # Ensure the order of age groups for the chart
+        age_group_order = ['Unknown'] + labels
+
+        age_counts = raw_df['age_group'].value_counts().reset_index()
+        age_counts.columns = ['Age Group', 'Count']
+        age_counts['Age Group'] = pd.Categorical(age_counts['Age Group'], categories=age_group_order, ordered=True)
+        age_counts = age_counts.sort_values('Age Group')
+
+
+        if not age_counts.empty:
+            fig_age = px.bar(
+                age_counts,
+                x='Age Group',
+                y='Count',
+                title='Number of Applicants by Age Group',
+                template="plotly_white",
+                color='Age Group'
+            )
+            st.plotly_chart(fig_age, use_container_width=True)
+        else:
+            st.info("No age data available or all values are null/empty.")
+    else:
+        st.info("Date of Birth (dob) column not found or is empty in the dataset.")
+
+
+    # Chart 3: Religion Distribution
+    if 'religion_id' in raw_df.columns and not raw_df['religion_id'].empty and not religions_df.empty:
+        # Merge with religion lookup table to get names
+        religion_data = raw_df.merge(religions_df, left_on='religion_id', right_on='id', how='left')
+        religion_data['religion_name'] = religion_data['religion_name'].fillna('Unknown Religion')
+        
+        religion_counts = religion_data['religion_name'].value_counts().reset_index()
+        religion_counts.columns = ['Religion', 'Count']
+        if not religion_counts.empty:
+            fig_religion = px.bar(
+                religion_counts,
+                x='Religion',
+                y='Count',
+                title='Number of Applicants by Religion',
+                template="plotly_white",
+                color='Religion'
+            )
+            st.plotly_chart(fig_religion, use_container_width=True)
+        else:
+            st.info("No religion data available or all values are null/empty after joining.")
+    else:
+        st.info("Religion ID column not found, is empty in the dataset, or religion lookup data is missing.")
+
+    # Chart 4: District Distribution
+    if 'present_district_id' in raw_df.columns and not raw_df['present_district_id'].empty and not districts_df.empty:
+        # Merge with district lookup table to get names
+        district_data = raw_df.merge(districts_df, left_on='present_district_id', right_on='id', how='left')
+        district_data['district_name'] = district_data['district_name'].fillna('Unknown District')
+
+        district_counts = district_data['district_name'].value_counts().reset_index()
+        district_counts.columns = ['District', 'Count']
+        if not district_counts.empty:
+            fig_district = px.bar(
+                district_counts,
+                x='District',
+                y='Count',
+                title='Number of Applicants by District',
+                template="plotly_white",
+                color='District'
+            )
+            st.plotly_chart(fig_district, use_container_width=True)
+        else:
+            st.info("No district data available or all values are null/empty after joining.")
+    else:
+        st.info("Present District ID column not found, is empty in the dataset, or district lookup data is missing.")
+
 else:
     st.warning("No data retrieved from Databricks. Please check your connection and table name.")
 

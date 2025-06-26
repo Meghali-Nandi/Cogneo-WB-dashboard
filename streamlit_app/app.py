@@ -10,7 +10,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-st.title("📊 Loan Application Approval Status Overview")
+st.title("Loan Application Approval Status Overview")
 
 st.markdown(
     """
@@ -222,5 +222,4 @@ else:
     st.warning("No data retrieved from Databricks. Please check your connection and table name.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Dashboard")
-�
+st.sidebar.caption("Dashboard by Gemini")

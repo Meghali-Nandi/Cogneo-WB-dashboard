@@ -81,11 +81,12 @@ def fetch_approval_data(table_name: str):
         return pd.DataFrame() # Return empty DataFrame on error
 
 # --- Function to process and aggregate/filter approval data ---
-def process_status_data(df: pd.DataFrame, selected_stage: str = "Aggregated"):
+def process_status_data(df: pd.DataFrame, selected_stage: str = "Aggregated", status_filter: list = None):
     """
     Processes and aggregates/filters approval statuses.
     Normalizes status names (e.g., 'Approved', 'approved').
     Can aggregate all stages or focus on a specific stage.
+    Applies an optional filter for specific status types.
     """
     if df.empty:
         return pd.DataFrame(), "No Data"
@@ -118,6 +119,10 @@ def process_status_data(df: pd.DataFrame, selected_stage: str = "Aggregated"):
         melted_df['status'] = melted_df['status'].astype(str).str.lower().str.strip()
         melted_df['standard_status'] = melted_df['status'].map(status_mapping).fillna('Other')
 
+        # Apply status filter if provided
+        if status_filter:
+            melted_df = melted_df[melted_df['standard_status'].isin(status_filter)]
+
         # Count occurrences of each standard status
         status_counts = melted_df['standard_status'].value_counts().reset_index()
         status_counts.columns = ['Status', 'Count']
@@ -132,6 +137,10 @@ def process_status_data(df: pd.DataFrame, selected_stage: str = "Aggregated"):
         stage_df = df[[stage_column]].copy() # Use .copy() to avoid SettingWithCopyWarning
         stage_df['status'] = stage_df[stage_column].astype(str).str.lower().str.strip()
         stage_df['standard_status'] = stage_df['status'].map(status_mapping).fillna('Other')
+        
+        # Apply status filter if provided
+        if status_filter:
+            stage_df = stage_df[stage_df['standard_status'].isin(status_filter)]
 
         status_counts = stage_df['standard_status'].value_counts().reset_index()
         status_counts.columns = ['Status', 'Count']
@@ -139,7 +148,12 @@ def process_status_data(df: pd.DataFrame, selected_stage: str = "Aggregated"):
 
     # Sort for better visualization (e.g., Approved first, Rejected second)
     order = ['Approved', 'Rejected', 'In Progress', 'Unknown/Missing', 'Other']
-    status_counts['Status'] = pd.Categorical(status_counts['Status'], categories=order, ordered=True)
+    # Filter order based on what's actually present in data and selected filter
+    relevant_order = [s for s in order if s in status_counts['Status'].unique()]
+    if status_filter:
+        relevant_order = [s for s in relevant_order if s in status_filter]
+
+    status_counts['Status'] = pd.Categorical(status_counts['Status'], categories=relevant_order, ordered=True)
     status_counts = status_counts.sort_values('Status')
 
     return status_counts, chart_title
@@ -158,6 +172,15 @@ with st.sidebar:
         options=all_status_stages,
         index=0, # Default to 'Aggregated'
         help="Choose 'Aggregated' for a combined view or a specific stage for granular data."
+    )
+    
+    # Multiselect for filtering by specific status types
+    all_status_types = ['Approved', 'Rejected', 'In Progress', 'Unknown/Missing', 'Other']
+    selected_status_types = st.multiselect(
+        "Filter by Result Status:",
+        options=all_status_types,
+        default=all_status_types, # Default to all selected
+        help="Select specific types of statuses to include in the charts."
     )
 
     st.write("Click below to refresh data from Databricks.")
@@ -179,8 +202,8 @@ data_load_state.empty() # Clear loading message
 if not raw_df.empty:
     st.subheader(f"{selected_view} Approval Statuses Overview")
 
-    # Process and get aggregated/filtered counts based on selection
-    processed_df, chart_title_text = process_status_data(raw_df, selected_view)
+    # Process and get aggregated/filtered counts based on selection, applying new status filter
+    processed_df, chart_title_text = process_status_data(raw_df, selected_view, selected_status_types)
 
     if not processed_df.empty:
         col1, col2 = st.columns([1, 2])
@@ -216,7 +239,8 @@ if not raw_df.empty:
         st.dataframe(raw_df.head(50), use_container_width=True) # Show only first 50 rows for preview
 
     else:
-        st.warning(f"Could not process data for '{selected_view}'. Check column names or data types.")
+        st.warning(f"No data to display after filtering for '{selected_view}' with selected status types. "
+                   "Try adjusting your 'Filter by Result Status' selection.")
 else:
     st.warning("No data retrieved from Databricks. Please check your connection and table name.")
 

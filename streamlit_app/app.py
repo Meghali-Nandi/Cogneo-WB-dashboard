@@ -399,4 +399,4 @@ else:
     st.warning("No data retrieved from Databricks. Please check your connection and table name.")
 
 st.sidebar.markdown("---")
-st.sidebar.caption("Dashboard by Gemini")
+st.sidebar.caption("Dashboard")

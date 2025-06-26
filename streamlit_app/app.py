@@ -61,7 +61,7 @@ def fetch_approval_data(table_name: str):
     """
     conn = get_databricks_connection()
     status_columns = [
-        "es_approval_status"
+        "es_approval_status", "da_approval_status"
     ]
     columns_str = ", ".join(status_columns)
     query = f"SELECT {columns_str} FROM {table_name} LIMIT 50000" # Added limit for safety
